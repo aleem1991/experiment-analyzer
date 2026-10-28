@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# Production build
+dist/
+build/
+
+# Testing & caches
+.pytest_cache/
+.coverage
+
+# Environment & local secrets
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,463 @@
+﻿Experiment Analyzer — Appwrite Databases Hackathon Build Guide
+A four-day build plan for a small, rigorous A/B-test analysis tool on Appwrite TablesDB. Prepared 27 October 2026. The hackathon deadline is Saturday 31 October at 11:59 PM PT, which is about 12:29 PM IST on Sunday 1 November; aim to submit on Saturday evening IST. This is a separate, new project (hackathon rules require entirely new code), and the statistics logic can later seed Phase B of DecisionPilot.
+1. The project in one page
+1.1 What it is
+Experiment Analyzer takes the results of an A/B test, asks you to declare your hypothesis before it looks at the numbers, and then returns a verdict you can defend: significant, not significant, inconclusive, or invalid. It chooses the right statistical test, checks that test’s assumptions, reports the effect size with a confidence interval, and says plainly what the result does and does not tell you.
+1.2 The one-sentence pitch
+“Most A/B tests get called wins on noise; Experiment Analyzer makes you state the hypothesis first, checks the maths, and tells you honestly when the data cannot answer the question.”
+1.3 Why this fits the hackathon
+Judging criterion
+How this project answers it
+Idea and innovation
+Pre-declared hypotheses, an honest “inconclusive” verdict, a sample-ratio-mismatch guard, and a statistics engine whose own error rates are measured and published
+Technical execution
+A tested Python statistics function, a validation script that simulates thousands of experiments, and a typed data model
+Design and experience
+One clear verdict banner, a confidence-interval picture, plain-language explanations, and three one-click demo experiments
+Usage of Appwrite Databases
+TablesDB with typed columns, relationships, row-level permissions, public sharing through permissions, indexed queries with pagination, and realtime updates
+1.4 What it is not
+It is not DecisionPilot, and it does not train models or call an LLM. It is a small, finished tool. Finishing a narrow thing well beats half-building a large one, and the judging page says the same: a well-executed idea with a thoughtful experience can win.
+1.5 What a user does
+Opens the site and presses Try a demo (an anonymous Appwrite session, so no sign-up friction), or signs in.
+Uploads or pastes a CSV with a group column and an outcome column, or loads a built-in example.
+Maps the columns and declares the hypothesis: metric type, direction, significance level, and the smallest effect that would matter to the business.
+Presses Analyse. The statistics function runs and the result is saved to TablesDB.
+Reads the verdict, the interval picture, the assumption checklist and the caveats.
+Optionally turns on Share to get a public read-only link, and sees past analyses in a history list.
+2. Rules and constraints that shape the build
+2.1 Hackathon rules (from Appwrite’s announcement)
+Runs 19 to 31 October 2026; submit by 31 October, 11:59 PM PT. Solo only.
+The project must be entirely new: code written before 19 October is not eligible, though open-source libraries are fine if you list them in the tech stack.
+It must use at least one of the five Appwrite database types.
+Submission needs a public code repository, a demo video of at most 2 to 3 minutes, and optionally a live demo link.
+Sign in to hackathon.appwrite.io with GitHub, then use Submit project on your dashboard.
+Judging: idea and innovation, technical execution, design and experience, and usage of Appwrite Databases.
+Prizes are a mechanical keyboard for first place and store merch for second and third. They are modest, so treat the win as a bonus and the finished portfolio piece as the real prize.
+2.2 Appwrite Cloud Free plan limits that matter (confirm on the pricing page in your first hour)
+Two projects per account; resources are shared across them.
+An older copy of the pricing page lists one database, one bucket and five functions per project, 750,000 function executions, 5 GB bandwidth and 2 GB storage a month. If that still holds, you get one database per project, which is why this guide uses TablesDB only.
+Free-plan functions use the default specification of 512 MB memory and 0.5 CPU, and a deployment build must finish within 15 minutes.
+Managed PostgreSQL and MySQL may cost extra, so avoid them.
+2.3 First-hour verification checklist
+These are the facts I could not confirm from public pages. Check each one before building on it, and note the result in your README.
+☐ Free plan: how many databases, tables, functions and buckets you actually get.
+☐ Python function runtime exists, installs numpy and scipy from requirements.txt within the build limit, and runs within 512 MB.
+☐ Maximum request body size for a function execution (decides whether to send data directly or through a Storage bucket).
+☐ Exact method names for creating rows and executions in the current web SDK (the shapes shown in this guide follow Appwrite’s published examples, but confirm).
+☐ Anonymous sessions are enabled by default in Auth settings.
+☐ Whether Appwrite Sites is available on the Free plan; if not, host the frontend on Netlify.
+3. Architecture
+3.1 The picture in words
+Browser (React + Vite) | Appwrite Web SDK |-- Auth: anonymous or email session |-- Functions.createExecution --&gt; Python function &quot;analyse&quot; | numpy + scipy statistics engine | returns StatResult JSON (no data stored) |-- TablesDB: experiments, analyses (typed columns, relationships, permissions) |-- Realtime: live history updates | Hosting: Appwrite Sites or Netlify (static React build)
+3.2 Decisions and reasons
+Decision
+Reason
+TablesDB only
+One database fits the Free plan, the data is structured, and TablesDB gives typed columns, relationships, row-level permissions and realtime
+Statistics in a Python function
+SciPy gives exact, well-tested tests (Welch, Mann-Whitney, permutation, bootstrap); JavaScript statistics libraries are thinner and easier to get wrong
+The client saves results to TablesDB
+Simplest for four days: the user’s own session writes the row, so permissions come for free. A stretch goal lets the function write with a server key for tamper-proof results
+Raw data is not stored
+Only summaries and results are saved, which keeps storage tiny and avoids holding people’s data; the function receives the numbers, computes, and forgets them
+Anonymous sessions for the demo
+Judges can try it in one click; permissions still isolate each visitor’s rows
+No LLM
+The statistics must be deterministic and testable, and a language model adds nothing the engine needs
+3.3 Optional stretch: VectorsDB
+A second database type needs a second Appwrite project on the Free plan (two projects are allowed). If you finish early, a small VectorsDB project could power “find similar past experiments”. Treat it as optional; one database used well scores better than two used thinly.
+4. Data model (TablesDB)
+Create one database named analyzer with two tables. Enable row security on both so that row-level permissions apply.
+4.1 Table experiments
+Column
+Type
+Notes
+ownerId
+string (36)
+The Appwrite user id; indexed
+name
+string (120)
+Required
+description
+string (1000)
+Optional
+metricType
+enum
+continuous or binary
+labelA, labelB
+string (60)
+Group names, for example “control” and “variant”
+nA, nB
+integer
+Sample sizes after cleaning
+isPublic
+boolean
+Default false; true adds a public read permission
+source
+enum
+upload, paste or demo
+4.2 Table analyses
+Column
+Type
+Notes
+experimentId
+relationship (many to one) to experiments
+If relationships are awkward on your plan, use an indexed string
+ownerId
+string (36)
+Indexed
+hypothesis
+string (500)
+The text the user declared before running
+alpha
+float
+Default 0.05
+alternative
+enum
+two-sided, greater, less
+minEffect
+float, optional
+The smallest effect that matters in practice
+test
+string (60)
+For example welch_t, mann_whitney, two_prop_z, fisher_exact
+statistic, pValue
+float
+
+effectName
+string (40)
+For example difference in means
+effectValue, ciLow, ciHigh
+float
+The interval is at the declared confidence level
+mde
+float
+Minimum detectable effect at 80 percent power
+verdict
+enum
+significant, not_significant, inconclusive, invalid
+assumptionsJson
+long text
+The assumption checklist as JSON; keep it under the column limit
+caveats
+string array
+Plain-language warnings
+seed
+integer
+For reproducibility
+engineVersion
+string (20)
+Version of the statistics function
+4.3 Permissions
+Table level: allow create for the role users (anonymous sessions count as users).
+Row level, set by the client on create: read, update and delete for Role.user(&lt;the user id&gt;).
+Sharing: when the user turns on Share, add Permission.read(Role.any()) to that experiment row and its analyses. Turning it off removes the permission.
+Public gallery (stretch): a query for isPublic = true that anyone can read.
+4.4 Indexes and queries
+Index ownerId plus $createdAt (descending) for the history list, with Query.limit and a cursor for pagination.
+Index isPublic for the gallery.
+History query shape (Appwrite’s published pattern): tablesDB.listRows({ databaseId, tableId: &apos;analyses&apos;, queries: [Query.equal(&apos;ownerId&apos;, uid), Query.orderDesc(&apos;$createdAt&apos;), Query.limit(20)] }).
+5. The statistics engine specification
+The engine is one Python function that receives numbers and returns a StatResult. It never trusts the user’s choice of test blindly: it decides from the data type and the assumption checks.
+5.1 Inputs
+{ &quot;metricType&quot;: &quot;continuous&quot;, &quot;a&quot;: [12.1, 9.8, ...], &quot;b&quot;: [13.4, 11.2, ...], &quot;labels&quot;: [&quot;control&quot;, &quot;variant&quot;], &quot;alpha&quot;: 0.05, &quot;alternative&quot;: &quot;two-sided&quot;, &quot;minEffect&quot;: 0.5, &quot;expectedRatio&quot;: 0.5, &quot;seed&quot;: 42}
+For binary metrics, a and b are arrays of 0 and 1 (or the function accepts counts of successes and totals). Cap each array at 20,000 values; if the user uploads more, the client samples nothing and instead warns, or aggregates binary data to counts, which loses nothing for proportion tests.
+5.2 Step 1: validation
+Remove missing and non-numeric values, and report how many were removed per group.
+Require at least 10 values per group for continuous metrics and at least 20 per group for binary metrics; otherwise return verdict invalid with the reason.
+Require two distinct groups. Warn when the groups are very unequal (ratio beyond 3 to 1).
+5.3 Step 2: sample ratio mismatch
+If the user declared an expected split (default 50/50), run a chi-square test of the observed group sizes against it. A p-value below 0.001 means the assignment is probably broken, so return invalid with the caveat “the groups are not the size they should be; the comparison may be biased”. This is the most common silent failure in real experiments and judges rarely see it handled.
+5.4 Step 3: choose and run the test
+Metric
+Condition
+Test
+Effect size and interval
+Continuous
+Default, and both groups have at least 30 values or look roughly normal
+Welch’s t-test
+Difference in means with the Welch confidence interval; Hedges’ g
+Continuous
+Fewer than 30 per group and Shapiro-Wilk rejects normality, or extreme outliers
+Mann-Whitney U, plus a permutation test on the mean difference as a cross-check
+Cliff’s delta, difference in medians; bootstrap interval for the difference in means
+Continuous
+Large samples with heavy skew
+Welch’s t-test, plus a bootstrap interval, with a caveat about skew
+Difference in means, bootstrap interval
+Binary
+All expected cell counts at least 5
+Two-proportion z-test
+Risk difference with Newcombe interval; relative lift with a log-ratio interval; odds ratio
+Binary
+Any expected count below 5
+Fisher’s exact test
+Odds ratio with its interval; risk difference with Newcombe interval
+Assumption checks recorded for the checklist: Shapiro-Wilk on up to 5,000 values per group, Levene’s test with the median centre (Brown-Forsythe), an outlier summary using the 1.5 times IQR rule, the sample ratio check, and the expected-count check for proportions. Each check stores name, passed, detail and actionTaken (for example “switched to Mann-Whitney”).
+5.5 Step 4: verdict rules
+Invalid: failed validation or sample ratio mismatch.
+Significant: p below alpha, and the confidence interval excludes zero in the declared direction. If the user gave a minimum effect, add “and practically meaningful” only when the interval’s nearer end is beyond it.
+Not significant: p at or above alpha, and the study could have detected the smallest effect that matters (the minimum detectable effect is no larger than minEffect).
+Inconclusive: p at or above alpha, and the minimum detectable effect is larger than minEffect. The data cannot rule out an effect that would matter. If the user supplied no minEffect, default it to 0.2 standard deviations for continuous metrics and 1 percentage point for binary ones, and say so.
+Minimum detectable effect, at 80 percent power, by the normal approximation: (z(1 - alpha/2) + z(0.80)) * sd * sqrt(1/nA + 1/nB) for continuous metrics, and the analogous formula with sqrt(p(1-p)) for proportions. Never report “observed power” from the result itself; it is a known fallacy and judges who know statistics will notice.
+5.6 Output (StatResult)
+{ &quot;test&quot;: &quot;welch_t&quot;, &quot;statistic&quot;: 2.31, &quot;pValue&quot;: 0.021, &quot;effectName&quot;: &quot;difference in means&quot;, &quot;effectValue&quot;: 0.84, &quot;ciLow&quot;: 0.13, &quot;ciHigh&quot;: 1.55, &quot;ciLevel&quot;: 0.95, &quot;mde&quot;: 0.62, &quot;verdict&quot;: &quot;significant&quot;, &quot;assumptions&quot;: [ {&quot;name&quot;: &quot;normality&quot;, &quot;passed&quot;: true, &quot;detail&quot;: &quot;Shapiro p=0.31 (control), 0.44 (variant)&quot;, &quot;actionTaken&quot;: &quot;none&quot;} ], &quot;descriptives&quot;: {&quot;a&quot;: {&quot;n&quot;: 480, &quot;mean&quot;: 10.2, &quot;sd&quot;: 3.1, &quot;median&quot;: 10.0}, &quot;b&quot;: {}}, &quot;caveats&quot;: [&quot;A significant result is not a guarantee of the same effect next time.&quot;], &quot;seed&quot;: 42, &quot;engineVersion&quot;: &quot;1.0.0&quot;}
+The plain-language sentence shown to the user is generated by simple templates from these fields, not by a language model, for example: “The variant’s average was 0.84 higher (95 percent interval 0.13 to 1.55). The interval excludes zero, so the difference is unlikely to be noise.”
+6. The statistics function
+6.1 Files
+functions/analyse/ requirements.txt numpy, scipy (pin scipy 1.11 or newer for confidence intervals on t-tests) src/main.py the Appwrite handler (thin) src/engine.py all statistics (pure Python, no Appwrite imports) tests/test_engine.py unit tests with known answers validate.py simulation that measures the engine’s own error rates
+Keep engine.py free of Appwrite code so you can test it with plain pytest on your laptop and reuse it later in DecisionPilot’s stats_core.
+6.2 The handler
+The exact request attribute names differ slightly between runtimes, so copy them from the Python function template that Appwrite generates, and keep the handler to a few lines.
+import jsonfrom engine import analyse # if the import fails, use the form the template showsdef main(context): try: payload = context.req.body_json # check the template for the exact attribute return context.res.json(analyse(payload)) except ValueError as e: return context.res.json({&apos;verdict&apos;: &apos;invalid&apos;, &apos;error&apos;: str(e)}, 400) except Exception as e: context.error(str(e)) return context.res.json({&apos;verdict&apos;: &apos;invalid&apos;, &apos;error&apos;: &apos;internal error&apos;}, 500)
+6.3 Core engine pieces
+import numpy as npfrom scipy import statsENGINE_VERSION = &apos;1.0.0&apos;def clean(values): arr = np.asarray(values, dtype=float) arr = arr[np.isfinite(arr)] return arrdef hedges_g(a, b): na, nb = len(a), len(b) sp = (((na - 1) * a.var(ddof=1) + (nb - 1) * b.var(ddof=1)) / (na + nb - 2)) ** 0.5 d = (a.mean() - b.mean()) / sp return d * (1 - 3 / (4 * (na + nb) - 9))def cliffs_delta(a, b): u = stats.mannwhitneyu(a, b, alternative=&apos;two-sided&apos;).statistic return 2 * u / (len(a) * len(b)) - 1def wilson(x, n, z): p = x / n d = 1 + z * z / n c = (p + z * z / (2 * n)) / d h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / d return c - h, c + hdef newcombe(x1, n1, x2, n2, z): p1, p2 = x1 / n1, x2 / n2 l1, u1 = wilson(x1, n1, z) l2, u2 = wilson(x2, n2, z) d = p1 - p2 return d - ((p1 - l1) ** 2 + (u2 - p2) ** 2) ** 0.5, d + ((u1 - p1) ** 2 + (p2 - l2) ** 2) ** 0.5def welch(a, b, alpha, alternative): res = stats.ttest_ind(a, b, equal_var=False, alternative=alternative) ci = res.confidence_interval(confidence_level=1 - alpha) return res.statistic, res.pvalue, a.mean() - b.mean(), ci.low, ci.highdef bootstrap_diff(a, b, alpha, seed, n_resamples=5000): def diff(x, y, axis): return np.mean(x, axis=axis) - np.mean(y, axis=axis) r = stats.bootstrap((a, b), diff, vectorized=True, n_resamples=n_resamples, confidence_level=1 - alpha, method=&apos;BCa&apos;, random_state=np.random.default_rng(seed)) return r.confidence_interval.low, r.confidence_interval.highdef srm_check(n_a, n_b, expected_ratio=0.5): total = n_a + n_b chi = stats.chisquare([n_a, n_b], f_exp=[total * expected_ratio, total * (1 - expected_ratio)]) return chi.pvaluedef mde_continuous(sd, n_a, n_b, alpha): z = stats.norm.ppf return (z(1 - alpha / 2) + z(0.80)) * sd * (1 / n_a + 1 / n_b) ** 0.5def mde_binary(p, n_a, n_b, alpha): z = stats.norm.ppf return (z(1 - alpha / 2) + z(0.80)) * (p * (1 - p)) ** 0.5 * (1 / n_a + 1 / n_b) ** 0.5
+Verdict logic, written once and tested hard:
+def decide(p, alpha, ci_low, ci_high, mde, min_effect, alternative): significant = p &lt; alpha and (ci_low &gt; 0 or ci_high &lt; 0 or alternative != &apos;two-sided&apos;) if significant: return &apos;significant&apos; return &apos;not_significant&apos; if mde &lt;= min_effect else &apos;inconclusive&apos;
+For one-sided tests, report the one-sided interval the library gives and state in the caveats that a one-sided test was declared in advance. Do not let the user choose the direction after seeing the data; the declaration step locks it.
+6.4 Engine tests (write these first)
+Welch against a hand-computed example from a textbook or a spreadsheet.
+Newcombe interval against a published worked example.
+Sample ratio mismatch: 5,000 and 5,000 passes; 6,000 and 4,000 fails.
+Tiny samples return invalid.
+Identical groups return not_significant or inconclusive, never significant.
+A skewed small sample triggers the Mann-Whitney path and records why.
+Missing values are removed and counted.
+The same seed gives identical bootstrap intervals.
+6.5 The validation script (the differentiator)
+validate.py runs the engine against simulated experiments with known truth and prints a table you paste into the README and show in the video:
+Check
+Method
+Target
+Type I error
+2,000 null experiments (no true effect), alpha 0.05, normal data
+Rejection rate between about 4.1 and 5.9 percent (the binomial range for 2,000 trials)
+Type I error, skewed data
+2,000 null experiments with lognormal data, small samples
+Within the same range, showing the engine’s test switch protects you
+Interval coverage
+The 95 percent interval contains the true difference
+Between about 94 and 96 percent
+Power
+A known effect of 0.5 standard deviations with 64 per group
+About 80 percent, matching theory
+Sample ratio guard
+Inject a 60/40 split
+Flagged in at least 99 percent of runs
+Report what you measure, even if one row misses its target; an honest table with a footnote beats a flawless-looking one that nobody believes.
+7. The frontend specification
+7.1 Stack
+React, TypeScript and Vite; the appwrite web SDK; PapaParse for CSV; Recharts for the distribution chart; a small hand-written SVG component for the interval picture; plain CSS or Tailwind. List every library in the README tech-stack section, as the rules ask.
+7.2 Routes
+Route
+Purpose
+/
+Landing page with the pitch and four demo buttons
+/new
+Four-step wizard: data, column mapping, hypothesis, review and run
+/a/:id
+Result page for one analysis (owner view)
+/history
+Paginated list of the user’s analyses with a verdict filter
+/s/:id
+Public read-only view of a shared analysis
+7.3 The wizard
+Data. Paste or upload a CSV, or press a demo. Parse in the browser, show the first rows and the row count, reject files over the cap with a clear message.
+Mapping. Choose the group column, the outcome column and which value is group A and which is B. For binary outcomes, choose which value counts as success.
+Hypothesis (locks on run). Metric type (detected, editable), direction, significance level, the smallest effect that matters, and the expected split. Add a one-line hypothesis text. After pressing Analyse these fields are saved with the result and cannot be edited, which is the pre-registration idea in miniature.
+Review and run. A summary card of everything declared, then Analyse. Show a progress state, and warm the function with a tiny call when the page loads so the first run is not slow.
+7.4 The result page
+Build it top to bottom in this order, so the answer comes first and the evidence follows:
+Verdict banner: one word, an icon, and one sentence. Colour supports the meaning but never carries it alone.
+Effect and interval: the number, the interval, and the picture (section 7.5).
+Plain-language reading: two or three sentences from templates.
+Assumption checklist: each check with pass, fail or warning, what was found, and what the engine did about it.
+Power card: the minimum detectable effect against the smallest effect that matters, with one sentence that says whether the test could have seen it.
+Distributions: overlaid histograms (or box plots) for continuous data, bars for proportions.
+Caveats and “what this does not tell you”.
+Actions: Share, Download JSON, Download a one-page Markdown report, Run again with changes (creates a new analysis; the old one stays untouched).
+7.5 The interval picture
+A horizontal axis with a vertical line at zero, a shaded band for the smallest effect that matters, a dot for the estimate and whiskers for the interval. Label the zero line and the band directly. This single picture explains significance, practical importance and uncertainty at once, so give it care.
+7.6 Plain-language templates (no LLM)
+Significant: “{B} averaged {value} {higher|lower} than {A} (95 percent interval {low} to {high}). The interval excludes zero, so the difference is unlikely to be noise.”
+Not significant: “No reliable difference was found. The interval runs from {low} to {high}, and this test could detect effects of about {mde} or more, so an effect as large as the one you care about would probably have shown up.”
+Inconclusive: “The data cannot tell. The interval {low} to {high} includes zero and also effects as large as {minEffect}, and the test could only detect effects of {mde} or more. Collect more data before deciding.”
+Invalid: “This comparison is not trustworthy: {reason}.”
+7.7 Demo data (generated by scripts/make_demo.py, fixed seeds)
+Demo
+Shape
+Story it tells
+Checkout button colour
+Binary, about 8,000 per group, conversion near 10 percent versus 11.4 percent
+A clear, significant win with an interval and a risk difference
+Page load time
+Continuous, skewed (lognormal), 20 per group
+The engine detects non-normality and switches to Mann-Whitney, and says why
+Email subject line
+Binary, planned 50/50 but split 6,000 and 4,000
+Sample ratio mismatch: verdict invalid, with an explanation
+Onboarding tweak
+Continuous, 40 per group, a small true effect
+Not significant, and inconclusive because the test was too small to see the effect that matters
+Do not tune seeds to force a particular p-value; choose seeds once, record them, and let the results fall where they fall. The story is the behaviour of the engine, not a lucky number.
+7.8 Accessibility and polish
+Keyboard-reachable controls, visible focus, sufficient contrast, labelled form fields, an aria-live region that announces the verdict when it appears, and meaningful empty, loading and error states. Judges score the experience, and these small things are quick wins.
+8. Appwrite setup checklist
+Create an Appwrite Cloud account and a project; note the endpoint and project id.
+Platforms: add a Web platform for localhost and, later, your deployed hostname. Without it the browser calls are blocked.
+Auth: enable Anonymous sessions and Email and password; GitHub sign-in is optional.
+Databases: create the analyzer database (TablesDB), then the two tables, columns, indexes and row security from section 4.
+Functions: create a function analyse with a Python runtime; add requirements.txt; deploy with the Appwrite CLI or from Git; set the execute permission to users; raise the timeout to what a bootstrap run needs (start with 30 seconds).
+Environment (.env): VITE_APPWRITE_ENDPOINT, VITE_APPWRITE_PROJECT_ID, VITE_DATABASE_ID, VITE_FUNCTION_ID. Never commit a server API key; this project needs none.
+Local tooling: Node for the frontend; a Python virtual environment with numpy, scipy and pytest for the engine.
+Hosting: Netlify (connect the repository or drag the build folder) or Appwrite Sites if your plan allows it. Add the hostname to Platforms.
+Smoke test: from the browser console create an anonymous session, write one row, read it back, and call the function with a tiny payload. Do this on day 0.
+9. The four-day plan
+Times assume about six to eight focused hours a day; Tuesday is a partial day. Each day ends with a gate that you can test.
+Day
+Goal
+Tasks
+Gate
+Tue 27 Oct (evening)
+Foundations
+First-hour verification checklist; Appwrite project, auth, database and tables; repository with licence and tech-stack list; engine skeleton with Welch and the first tests
+Anonymous session, one saved row and one function call all work from the browser
+Wed 28 Oct
+The engine
+All tests and effect sizes; sample ratio check; verdict rules; minimum detectable effect; unit tests; validate.py and its results; deploy the function; make_demo.py
+The function returns correct results for all four demo files, and the validation table is within target or honestly footnoted
+Thu 29 Oct
+The product
+Wizard, result page, interval picture, assumption list, save to TablesDB, history with pagination
+A new user can go from demo button to saved, readable result
+Fri 30 Oct
+Polish and proof
+Share toggle with public permission, shared view, realtime history refresh, error and empty states, accessibility pass, README, deploy, record the video
+The live site works in a private browser window; the video is recorded
+Sat 31 Oct
+Buffer and submit
+Re-record anything weak, clean the repository (no secrets, licence present), final read-through, submit by the evening in IST
+Submission confirmed on your hackathon dashboard
+If you fall behind, cut in this order: the public gallery; the Markdown report download; realtime refresh; one-sided tests; the bootstrap interval for continuous data (keep Welch and Mann-Whitney); the second demo. Never cut: the pre-declared hypothesis, the assumption checklist, the sample ratio guard, the interval picture, the validation table, the demo data, the README and the video.
+10. How the app uses Appwrite Databases (the part judges score)
+One judging criterion is how effectively you use the database. Make each feature visible in the app, and name it in the README and the video.
+TablesDB feature
+Where it appears in the app
+Typed columns and enums
+metricType, verdict and alternative are enums; numbers are floats and integers, so the database rejects malformed results
+Relationships
+Each analysis points to its experiment; the experiment page lists its analyses and re-runs
+Row-level permissions
+Every row is readable only by its owner; the Share switch adds a public read permission to that row
+Public sharing through permissions
+The /s/:id page works for logged-out visitors because the row carries Role.any() read access
+Indexed queries and pagination
+History is filtered by owner and verdict, ordered newest first, with a limit and a cursor
+Realtime
+The history list updates when a new analysis is saved, including from another tab
+Anonymous sessions with permissions
+Judges try the demo without signing up and still cannot see each other’s rows
+10.1 Code shapes to start from
+The first and third snippets follow Appwrite’s published examples; the others use the same object-parameter style. Confirm each method name against the current docs in your first hour.
+// lib/appwrite.tsimport { Client, Account, TablesDB, Functions, Query, ID, Permission, Role } from &apos;appwrite&apos;;const client = new Client() .setEndpoint(import.meta.env.VITE_APPWRITE_ENDPOINT) .setProject(import.meta.env.VITE_APPWRITE_PROJECT_ID);export const account = new Account(client);export const tablesDB = new TablesDB(client);export const functions = new Functions(client);export { client, Query, ID, Permission, Role };
+// Run the analysis, then save it under the user’s own permissionsconst exec = await functions.createExecution({ functionId: import.meta.env.VITE_FUNCTION_ID, body: JSON.stringify(payload), async: false,});const result = JSON.parse(exec.responseBody);const me = await account.get();await tablesDB.createRow({ databaseId, tableId: &apos;analyses&apos;, rowId: ID.unique(), data: { ...declared, ...result, ownerId: me.$id, experimentId }, permissions: [ Permission.read(Role.user(me.$id)), Permission.update(Role.user(me.$id)), Permission.delete(Role.user(me.$id)), ],});
+// History: owner only, newest first, paginatedconst page = await tablesDB.listRows({ databaseId, tableId: &apos;analyses&apos;, queries: [Query.equal(&apos;ownerId&apos;, me.$id), Query.orderDesc(&apos;$createdAt&apos;), Query.limit(20)],});
+// Share toggle: add or remove public read access on the rowpermissions: shared ? [Permission.read(Role.any()), Permission.read(Role.user(me.$id)), Permission.update(Role.user(me.$id)), Permission.delete(Role.user(me.$id))] : [Permission.read(Role.user(me.$id)), Permission.update(Role.user(me.$id)), Permission.delete(Role.user(me.$id))]
+For Realtime, subscribe to the channel for rows of the analyses table as given in the Realtime documentation (the channel string includes the database and table ids) and prepend incoming rows to the history list.
+10.2 Stretch: tamper-proof results
+Because the browser saves the result, a determined user could edit the numbers before saving. For a stronger design, let the function write the row with a server API key (scopes limited to rows write on this table) and return only the row id. This is a good “what I would do next” line in the README even if you do not build it.
+11. Testing and quality
+Layer
+What to test
+How
+Engine
+Known answers, edge cases, determinism
+pytest on engine.py (section 6.4)
+Engine behaviour
+Error rates and coverage
+validate.py simulations (section 6.5), results saved in the repository
+Function
+The handler returns the contract for all four demo files and rejects bad input
+A small script that posts each demo to the deployed function
+Frontend
+CSV parsing, column mapping, locked hypothesis, verdict wording
+A few component tests, or a written manual script if time is short
+Permissions
+A second browser profile cannot read the first user’s private rows; a logged-out visitor can read a shared row but not a private one
+Manual test with two anonymous sessions and one logged-out window; write the result in the README
+End to end
+Demo button to saved result to shared link
+One recorded run-through, repeated on the live site in a private window
+Manual release script (run before recording the video): open the live site in a private window; press each of the four demos; check the four verdicts match section 7.7; share one analysis and open the link while logged out; confirm a different anonymous session cannot see it in history; refresh and confirm history persists.
+12. The submission pack
+12.1 README outline
+One-paragraph pitch and a screenshot of the result page.
+Try it: live link and the four demo buttons.
+Why it exists: the pre-declared hypothesis, assumption checks, sample ratio guard and the honest “inconclusive” verdict.
+How it uses Appwrite Databases (the table in section 10).
+Architecture in one paragraph and a diagram.
+How correct is it? The validation table from validate.py.
+Run it locally: prerequisites, .env keys, npm run dev, pytest.
+Tech stack and libraries (required by the rules).
+Limitations and what I would do next (tamper-proof results, VectorsDB for similar experiments, more tests, multiple-metric correction).
+Licence and a line stating the project was started on or after 19 October 2026.
+12.2 Demo video script (2 minutes 30 seconds)
+Time
+Show
+Say
+0:00 to 0:15
+Title and one slide
+“Most A/B tests are called wins on noise. This tool makes you state the hypothesis first and tells you honestly when the data cannot answer.”
+0:15 to 0:50
+Press the checkout demo, show the declaration step, press Analyse
+“Note the hypothesis is declared and locked before any numbers appear.”
+0:50 to 1:25
+Result page: verdict, interval picture, assumptions
+“The engine chose the test, checked the assumptions, and the interval excludes zero.”
+1:25 to 1:55
+Run the email demo (invalid) and the onboarding demo (inconclusive)
+“It refuses a broken experiment and admits when a test is too small.”
+1:55 to 2:15
+Appwrite console: tables, row permissions, then the shared link in a logged-out window
+“TablesDB gives typed results, owner-only rows, and public sharing through permissions.”
+2:15 to 2:30
+The validation table
+“The engine’s own error rates are measured: about five percent false positives at alpha 0.05, and intervals that cover as promised.”
+Record at a readable zoom, narrate calmly, and trim dead time; if a take wobbles, re-record that section only.
+12.3 Submission checklist
+☐ Public GitHub repository, with a licence file and the README above.
+☐ No secrets in the history (only public Appwrite ids appear in .env.example).
+☐ The tech-stack list includes every library, including the statistics packages.
+☐ Live demo link works in a private window (optional but strongly recommended).
+☐ Demo video of no more than 2 to 3 minutes, uploaded where anyone can view it.
+☐ Signed in at hackathon.appwrite.io with GitHub; Submit project pressed; confirmation visible on the dashboard.
+☐ Submitted by Saturday evening IST, leaving a margin before the 11:59 PM PT deadline.
+13. Risks and fallbacks
+Risk
+Fallback
+The Python function cannot install SciPy or runs out of memory on the Free plan
+Keep the engine identical but run it in the browser with Pyodide (SciPy compiled to WebAssembly), or host the same code in a small free service and call it from the app; the database usage is unchanged
+The request body is too large for a function
+Send binary data as counts, cap continuous data at a few thousand values, or upload the CSV to a Storage bucket and pass the file id
+The Free plan limits you to one database
+Already designed for it: TablesDB only
+Appwrite Sites is not available on the Free plan
+Host on Netlify and add the hostname under Platforms
+The first function call is slow (cold start)
+Warm it with a tiny call when the page loads
+Anonymous sessions disabled or limited
+Offer email sign-up with a single click demo account
+Time runs out
+Use the cut list in section 9; ship the engine, wizard, result page, history and README before anything else
+The method names in the SDK differ from the snippets
+Follow the current Appwrite docs and quickstart; the architecture does not depend on exact names
+14. After the hackathon
+engine.py becomes stats_core in DecisionPilot’s Phase B, with the same validation script running in CI.
+The locked hypothesis record is the first version of DecisionPilot’s pre-declared hypotheses (section 9.4 of the main guide).
+The verdict rules and the “inconclusive” outcome carry over unchanged to the hypothesis_test node.
+Keep this repository separate and public; reusing your own code later is fine.
+15. What I checked and what is still open
+Confirmed from Appwrite’s pages (October 2026): the hackathon dates, solo-only rule, new-project rule, submission contents and judging criteria; that managed PostgreSQL and MySQL may cost extra; the TablesDB, DocumentsDB and VectorsDB SDK usage shapes quoted in section 10; the Free plan allows two projects with shared resources, a 15-minute build limit, and a default function size of 512 MB and 0.5 CPU.
+Not confirmed: the current Free-plan counts of databases, buckets and functions (an older pricing page said one, one and five per project); Python runtime support for SciPy inside a function; request body limits; exact method names for rows and executions; whether anonymous sessions and Sites are enabled on the Free plan. The first-hour checklist in section 2.3 settles each one before you depend on it.
+
